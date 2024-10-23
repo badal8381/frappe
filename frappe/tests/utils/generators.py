@@ -36,7 +36,7 @@ __all__ = [
 
 
 @cache
-def get_modules(doctype) -> (str, ModuleType):
+def get_modules(doctype) -> tuple[str, ModuleType]:
 	"""Get the modules for the specified doctype"""
 	module = frappe.db.get_value("DocType", doctype, "module")
 	try:
@@ -323,22 +323,11 @@ def _try_create(record, reset=False, commit=False) -> tuple["Document", bool]:
 
 	d.docstatus = 0
 
-	try:
-		d.run_method("before_test_insert")
-		d.insert(ignore_if_duplicate=True)
+	d.run_method("before_test_insert")
+	d.insert(ignore_if_duplicate=True)
 
-		if docstatus == 1:
-			d.submit()
-
-	except frappe.NameError:
-		revert_naming(d)
-
-	except Exception as e:
-		if d.flags.ignore_these_exceptions_in_test and e.__class__ in d.flags.ignore_these_exceptions_in_test:
-			revert_naming(d)
-		else:
-			logger.debug(f"Error in making test record for {d.doctype} {d.name}")
-			raise
+	if docstatus == 1:
+		d.submit()
 
 	if commit:
 		frappe.db.commit()
@@ -415,9 +404,13 @@ class TestRecordManager:
 					entry = json.loads(line)
 					index_doctype = entry["doctype"]
 					records = entry["records"]
-					log.setdefault(index_doctype, []).extend(
-						frappe.get_doc(r["doctype"], r["name"]) for r in records
-					)
+					try:
+						for r in records:
+							log.setdefault(index_doctype, []).append(frappe.get_doc(r["doctype"], r["name"]))
+					except frappe.DoesNotExistError as e:
+						raise ValueError(
+							f"Global test record '{r['name']}' ({r['doctype']}) had been deleted resulting in inconsistent global state."
+						) from e
 		return log
 
 	def _remove_from_log(self, index_doctype):
